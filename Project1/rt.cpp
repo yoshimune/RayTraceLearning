@@ -56,7 +56,6 @@ V normarize(V v) {
 //Tone Map
 int tonemap(double v) {
 	// ガンマ補正をかけてから 0 - 255 でクランプする
-	v = std::abs(v);
 	return std::min(std::max(int(std::pow(v, 1 / 2.2) * 255), 0), 255);
 }
 
@@ -79,6 +78,7 @@ struct Hit {
 struct Sphere {
 	V p;		// 中心の位置
 	double r;	// 半径
+	V R;		// reflectance 色 反射率
 
 	// 交差判定
 	// 交差したならばHit型の値を返す、交差していない場合はstd::nullptrを返す
@@ -108,18 +108,18 @@ struct Scene {
 	// シーン中に存在する球
 	std::vector<Sphere> spheres{
 		// 1
-		//{ V(-.5, 0, 0), 1 },
-		//{ V( .5, 0, 0), 1 },
+		//{ V(-.5, 0, 0), 1, V(1,0,0) },
+		//{ V( .5, 0, 0), 1, V(0,1,0) },
 
 		// Cornell Box
-		{ V(1e5 + 1, 40.8, 81.6), 1e5 },
-		{ V(-1e5 + 99, 40.8, 81.6), 1e5 },
-		{ V(50, 40.8, 1e5), 1e5 },
-		{ V(50, 1e5, 81.6), 1e5 },
-		{ V(50, -1e5 + 81.6, 81.6), 1e5 },
-		{ V(27, 16.5, 47), 16.5 },
-		{ V(73, 16.5, 78), 16.5 },
-		{ V(50, 681.6-.27, 81.6), 600 },
+		{ V(1e5 + 1, 40.8, 81.6),	1e5, V(.75,.25,.25) },
+		{ V(-1e5 + 99, 40.8, 81.6), 1e5, V(.25,.25,.75) },
+		{ V(50, 40.8, 1e5),			1e5, V(.75) },
+		{ V(50, 1e5, 81.6),			1e5, V(.75) },
+		{ V(50, -1e5 + 81.6, 81.6), 1e5, V(.75) },
+		{ V(27, 16.5, 47),			16.5, V(.999) },
+		{ V(73, 16.5, 78),			16.5, V(.999) },
+		{ V(50, 681.6-.27, 81.6),	600, V() },
 	};
 
 	// 交差したならばHit型の値を返す、交差していない場合はstd::nullptrを返す
@@ -203,11 +203,11 @@ int main()
 
 		const auto h = scene.intersect(ray, 0, 1e+10);
 		if (h) {
-			const auto n = h->n;
+			const auto c = h->sphere->R * dot(h->n, -ray.d);
 
-			ofs << tonemap(n.x) << " "
-				<< tonemap(n.y) << " "
-				<< tonemap(n.z) << "\n";
+			ofs << tonemap(std::abs(c.x)) << " "
+				<< tonemap(std::abs(c.y)) << " "
+				<< tonemap(std::abs(c.z)) << "\n";
 		}
 		else {
 			ofs << "0 0 0\n";
