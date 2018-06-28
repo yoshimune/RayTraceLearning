@@ -103,12 +103,21 @@ struct Hit {
 	const Sphere* sphere;	// あたった球（ポインタ）
 };
 
+// Surface Type
+enum class SurfaceType {
+	Diffuse,	// 拡散反射（Lambert）
+	Mirror,		// 鏡面反射
+	Fresnel,	// 屈折(Schlick)
+};
+
 //Sphere
 struct Sphere {
-	V p;		// 中心の位置
-	double r;	// 半径
-	V R;		// reflectance 色 反射率
-	V Le;		// 照度 illuminance
+	V p;					// 中心の位置
+	double r;				// 半径
+	SurfaceType type;		// 材質
+	V R;					// reflectance 色 反射率
+	V Le;					// 照度 illuminance
+	double ior = 1.5168;	// 屈折率（固定 BK7） 
 
 	// 交差判定
 	// 交差したならばHit型の値を返す、交差していない場合はstd::nullptrを返す
@@ -142,14 +151,14 @@ struct Scene {
 		//{ V( .5, 0, 0), 1, V(0,1,0) },
 
 		// Cornell Box
-		{ V(1e5 + 1, 40.8, 81.6),	1e5, V(.75,.25,.25) },
-		{ V(-1e5 + 99, 40.8, 81.6), 1e5, V(.25,.25,.75) },
-		{ V(50, 40.8, 1e5),			1e5, V(.75) },
-		{ V(50, 1e5, 81.6),			1e5, V(.75) },
-		{ V(50, -1e5 + 81.6, 81.6), 1e5, V(.75) },
-		{ V(27, 16.5, 47),			16.5, V(.999) },
-		{ V(73, 16.5, 78),			16.5, V(.999) },
-		{ V(50, 681.6-.27, 81.6),	600, V(), V(12) },
+		{ V(1e5 + 1, 40.8, 81.6),	1e5, SurfaceType::Diffuse, V(.75,.25,.25) },
+		{ V(-1e5 + 99, 40.8, 81.6), 1e5, SurfaceType::Diffuse, V(.25,.25,.75) },
+		{ V(50, 40.8, 1e5),			1e5, SurfaceType::Diffuse, V(.75) },
+		{ V(50, 1e5, 81.6),			1e5, SurfaceType::Diffuse, V(.75) },
+		{ V(50, -1e5 + 81.6, 81.6), 1e5, SurfaceType::Diffuse, V(.75) },
+		{ V(27, 16.5, 47),			16.5, SurfaceType::Mirror, V(.999) },
+		{ V(73, 16.5, 78),			16.5, SurfaceType::Fresnel, V(.999) },
+		{ V(50, 681.6-.27, 81.6),	600, SurfaceType::Diffuse, V(), V(12) },
 	};
 
 	// 交差したならばHit型の値を返す、交差していない場合はstd::nullptrを返す
@@ -297,29 +306,79 @@ int main(int argc, char* argv[])
 				// Update next direction
 				// レイの原点を更新
 				ray.o = h->p;
+
 				// レイの方向
 				ray.d = [&]() {
-					// ２次レイ以降の生成
-					// 1. 接空間の基底ベクトルを求める
-					// 2. 1の空間で次の方向をランダムに生成
-					// 3. 2の方向をワールド座標系に変換
+					if (h->sphere->type == SurfaceType::Diffuse) {
 
-					// Sample direction in local coodinates
-					// 方向は法線と反射方向のcosに従う分布から生成する
-					const auto n = dot(h->n, -ray.d) > 0 ? h->n : -h->n;
-					
-					// 椄空間基底ベクトルを求める
-					const auto&[u, v] = tangentSpace(n);
+						// ２次レイ以降の生成(Diffuse)
+						// 1. 接空間の基底ベクトルを求める
+						// 2. 1の空間で次の方向をランダムに生成
+						// 3. 2の方向をワールド座標系に変換
 
-					const auto d = [&]() {
-						const double r = sqrt(rng.next());
-						const double t = 2 * M_PI * rng.next();
-						const double x = r * cos(t);
-						const double y = r * sin(t);
-						return V(x, y, std::sqrt(std::max(.0, 1 - x * x - y * y)));
-					}();
-					// Convert to world coordinates
-					return u * d.x + v * d.y + n * d.z;
+						// Sample direction in local coodinates
+						// 方向は法線と反射方向のcosに従う分布から生成する
+						const auto n = dot(h->n, -ray.d) > 0 ? h->n : -h->n;
+
+						// 椄空間基底ベクトルを求める
+						const auto&[u, v] = tangentSpace(n);
+
+						const auto d = [&]() {
+							const double r = sqrt(rng.next());
+							const double t = 2 * M_PI * rng.next();
+							const double x = r * cos(t);
+							const double y = r * sin(t);
+							return V(x, y, std::sqrt(std::max(.0, 1 - x * x - y * y)));
+						}();
+						// Convert to world coordinates
+						return u * d.x + v * d.y + n * d.z;
+					}
+					else if (h->sphere->type == SurfaceType::Mirror) {
+						// 鏡面反射
+						const auto wi = -ray.d;
+						return 2 * dot(wi, h->n) * h->n - wi;
+					}
+					else if (h->sphere->type == SurfaceType::Fresnel) {
+						// 屈折
+						const auto wi = -ray.d;
+						const auto into = dot(wi, h->n) > 0;	// 物質へ入射している or 射出している
+						const auto n = into ? h->n : -h->n;		// 入射 or 射出によって法線の方向を変える
+						const auto ior = h->sphere->ior;		// 屈折率
+						const auto eta = into ? 1 / ior : ior;	// 屈折率の比 入射/射出
+
+						// スネルの法則を使って、透過した場合のレイの方向を計算する
+						const auto wt = [&]() -> std::optional<V> {
+							// Snell's law (vector form)
+							// n1 sinθ1 = n2 sinθ2 (n1,n2:屈折率 θ1:入射角 θ2:射出角)
+							const auto t = dot(wi, n);
+
+							// スネルの法則から、射出角を求める
+							const auto t2 = 1 - eta * eta * (1 - t * t);
+
+							// 射出角が90度以上の場合は全反射とする
+							if (t2 < 0) { return {}; }
+
+							// 射出レイの方向ベクトル
+							return eta * (n*t - wi) - n * sqrt(t2);
+						}();
+
+						if (!wt) {
+							// Total internal reflection
+							return 2 * dot(wi, h->n)*h->n - wi;
+						}
+
+						const auto Fr = [&]() {
+							// Sclick's approximation
+							const auto cos = into ? dot(wi, h->n) : dot(*wt, h->n);
+							const auto r = (1 - ior) / (1 + ior);
+							return r * r + (i - r * r)*pow(1 - cos, 5);
+						}();
+
+						// Select reflection or refraction
+						// according to the fresnel term
+						return rng.next() < Fr ? 2 * dot(wi, h -> n)*h->n - wi : *wt;
+					}
+					return V();
 				}();
 
 				// Update throughput
