@@ -8,7 +8,9 @@
 #include <omp.h>
 #include <time.h>
 #include <sstream>
+#include <cassert>
 
+#define UNREACHABLE() assert(0)
 // Vector3
 struct V {
 	double x;
@@ -371,13 +373,14 @@ int main(int argc, char* argv[])
 							// Sclick's approximation
 							const auto cos = into ? dot(wi, h->n) : dot(*wt, h->n);
 							const auto r = (1 - ior) / (1 + ior);
-							return r * r + (i - r * r)*pow(1 - cos, 5);
+							return r * r + (1 - r * r)*pow(1 - cos, 5);
 						}();
 
 						// Select reflection or refraction
 						// according to the fresnel term
 						return rng.next() < Fr ? 2 * dot(wi, h -> n)*h->n - wi : *wt;
 					}
+					UNREACHABLE();
 					return V();
 				}();
 
